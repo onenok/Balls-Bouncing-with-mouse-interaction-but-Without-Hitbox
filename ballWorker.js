@@ -145,7 +145,7 @@ self.addEventListener('message', (e) => {
             init();
             break;
         case 'canUpdate':
-            canUpdate = true;
+            canUpdate = true; // 收到主執行緒訊號：我可以接收新 Buffer 了
             break;
         case 'resize':
             canvasWidth = data.width;
@@ -161,9 +161,7 @@ self.addEventListener('message', (e) => {
             mouseY = -999;
             break;  
         case 'mouseClick':
-            if (activeCount < MAX_BALLS) {
-                createBalls(activeCount);
-            }
+            if (activeCount < MAX_BALLS) createBalls(activeCount);
             break;
     }
 });
