@@ -1,5 +1,6 @@
 // ballWorker.js
 console.log('Ball Worker Loaded');
+
 // canvas 參數
 // canvas parameters
 let canvasWidth = null;
@@ -7,161 +8,179 @@ let canvasHeight = null;
 
 // 配置參數
 // Config Parameters
-const msBetweenUpdates = 16; // 約 60 FPS // about 60 FPS
-const maxBallRadius = 50; // 最大球半徑 // maximum ball radius
-let canUpdate = false; // 控制是否可以更新 // Control whether to update
-
-// 最大球數量
-// Maximum number of balls
-const MAX_BALLS = 5000;
-// 初始球數量
-// Initial number of balls
-const numBalls = 1000;
-// 球半徑
-// ball Radius
-const ballRadius = 15;
-// 數據導向存儲 -- 8 步幅: [x, y, vx, vy, radius, h, s, v]
-// DOP storage -- 8 Stride: [x, y, vx, vy, radius, h, s, v]
-const STRIDE = 8;
-
-// 創建 緩衝區 (5000 顆 * 8 欄 * 4 位元組/浮點數 = 160,000 位元組)
-// create buffer (5000 balls * 8 fields * 4 bytes/float = 160,000 bytes)
-const buffer = new ArrayBuffer(MAX_BALLS * STRIDE * 4);
-
-// 創建 視圖 // create Views
-const x = new Float32Array(buffer, 0, MAX_BALLS);
-const y = new Float32Array(buffer, MAX_BALLS * 4, MAX_BALLS);
-const vx = new Float32Array(buffer, MAX_BALLS * 8, MAX_BALLS);
-const vy = new Float32Array(buffer, MAX_BALLS * 12, MAX_BALLS);
-const radius = new Float32Array(buffer, MAX_BALLS * 16, MAX_BALLS);
-// HSV 顏色元件 // HSV color components
-const h = new Float32Array(buffer, MAX_BALLS * 20, MAX_BALLS); // 0-360
-
-const s = new Float32Array(buffer, MAX_BALLS * 24, MAX_BALLS); // 0-100
-const v = new Float32Array(buffer, MAX_BALLS * 28, MAX_BALLS); // 0-100
-
-// 目前場上球的實際數量 
-// actual number of balls on screen
-let activeCount = 0;
-// 滑鼠位置
-// mouse position
 let mouseX = null;
 let mouseY = null;
+let canPost = false; // 是否可以發送更新
+let doWorkerSync = false; // 是否啟用工作者同步
 
-// 創建球的函式
-// Function to create balls
-function createBalls(i) {
-    // 初始化位置和速度
-    // Initialize position and velocity
-    balls.x[i] = Math.random() * (canvas.width - 2 * ballRadius) + ballRadius;
-    balls.y[i] = Math.random() * (canvas.height - 2 * ballRadius) + ballRadius;
-    balls.vx[i] = (Math.random() - 0.5) * 4;
-    balls.vy[i] = (Math.random() - 0.5) * 4;
-    // 初始化半徑
-    // Initialize radius
-    balls.radius[i] = ballRadius;
-    // 使用隨機 HSV 顏色初始化顏色
-    // Initialize color with Random HSV color
-    balls.h[i] = Math.floor(Math.random() * 361); // 0-360
-    balls.s[i] = Math.floor(Math.random() * 40) + 60; // 60-100
-    balls.v[i] = Math.floor(Math.random() * 50) + 50; // 50-100
-    // 賦予 ID
-    // Assign ID
-    balls.id = i;
-    activeCount++;
+// 性能參數
+// performace parameters
+let UpdateCount = 0;
+let ups = 0;
+let lastUpsUpdate = 0;
+
+// 球 參數
+// ball parameters
+const ballparms = {
+    MAX_BALLS: 5000, // 最大球數量 // Maximum number of balls
+    numBalls: 250, // 初始球數量 // Initial number of balls
+    currentBallCount: 0, // 當前活躍球數量 // Current active ball count
+    ballRadius: 5, // 球半徑 // ball Radius
+    maxBallRadius: null, // 最大球半徑 // max ball Radius
+    maxBaseBallRadius: null  // 最大基礎球半徑 // max base ball Radius
+};
+// 數據存儲
+// Data Storage
+const STRIDE = 9; // 步幅 // stride
+const buffer = new ArrayBuffer(ballparms.MAX_BALLS * STRIDE * 4); // 創建 緩衝區 // create buffer
+// 創建 視圖 // create Views
+const x = new Float32Array(buffer, 0, ballparms.MAX_BALLS);
+const y = new Float32Array(buffer, ballparms.MAX_BALLS * 4, ballparms.MAX_BALLS);
+const vx = new Float32Array(buffer, ballparms.MAX_BALLS * 8, ballparms.MAX_BALLS);
+const vy = new Float32Array(buffer, ballparms.MAX_BALLS * 12, ballparms.MAX_BALLS);
+const radius = new Float32Array(buffer, ballparms.MAX_BALLS * 16, ballparms.MAX_BALLS);
+const h = new Float32Array(buffer, ballparms.MAX_BALLS * 20, ballparms.MAX_BALLS);
+const s = new Float32Array(buffer, ballparms.MAX_BALLS * 24, ballparms.MAX_BALLS);
+const v = new Float32Array(buffer, ballparms.MAX_BALLS * 28, ballparms.MAX_BALLS);
+const radiusAdd = new Float32Array(buffer, ballparms.MAX_BALLS * 32, ballparms.MAX_BALLS);
+
+// 創建球
+// Create Balls
+function createBalls(i, xx = null, yy = null) {
+    const thisBallRadius = Math.floor(Math.random() * (ballparms.maxBaseBallRadius - ballparms.ballRadius)) + ballparms.ballRadius;
+    x[i] = xx !== null ? xx : Math.random() * (canvasWidth - 2 * thisBallRadius) + thisBallRadius;
+    y[i] = yy !== null ? yy : Math.random() * (canvasHeight - 2 * thisBallRadius) + thisBallRadius;
+    vx[i] = (Math.random() - 0.5) * 4;
+    vy[i] = (Math.random() - 0.5) * 4;
+    radius[i] = thisBallRadius;
+    h[i] = Math.floor(Math.random() * 361);
+    s[i] = Math.floor(Math.random() * 40) + 60;
+    v[i] = Math.floor(Math.random() * 50) + 50;
+    radiusAdd[i] = 0;
+    ballparms.currentBallCount++;
 }
 
-// 初始化函式
-// Initialization function
+// 初始化
+// Initialization
 function init() {
-    for (let i = 0; i < numBalls; i++) {
+    console.log('Worker Init');
+    ballparms.currentBallCount = 0;
+    for (let i = 0; i < ballparms.numBalls; i++) {
         createBalls(i);
     }
-    postMessage({ type: 'initComplete', buffer: buffer, activeCount: activeCount });
+    // 初始完成，進入物理循環
+    updateBall();
 }
 
-// 更新函式
-// Update function
-function update() {
-    if (!canUpdate) {
-        setTimeout(update, msBetweenUpdates);
-        return;
-    }
-    
-    updateBalls();
-    postMessage({ type: 'updateComplete', buffer: buffer, activeCount: activeCount });
-    setTimeout(update, msBetweenUpdates);
-}
+// 更新函數
+// update function
+function updateBall() {
+    // 執行更新
+    // run update
+    const count = ballparms.currentBallCount;
+    const mx = mouseX;
+    const my = mouseY;
+    const cw = canvasWidth;
+    const ch = canvasHeight;
 
+    for (let i = 0; i < count; i++) {
+        const r = radius[i] + radiusAdd[i];
 
-function updateBalls() {
-    for (let i = 0; i < activeCount; i++) {
-        updateBallsPos(i);
-        updateBallsRadius(i);
-    }
-}
+        // 更新位置
+        x[i] += vx[i];
+        y[i] += vy[i];
 
-function updateBallsPos(i) {
-    // 更新球的位置和速度
-    // Update ball positions and velocities
-    // 更新位置
-    x[i] += vx[i];
-    y[i] += vy[i];
-    // 邊界碰撞檢測
-    if (x[i] - radius[i] < 0 || x[i] + radius[i] > canvas.width) {
-        vx[i] = -vx[i];
-    }
-    if (y[i] - radius[i] < 0 || y[i] + radius[i] > canvas.height) {
-        vy[i] = -vy[i];
-    }
-}
+        // 邊界碰撞
+        if (x[i] - r < 0) { x[i] = r; vx[i] *= -1; }
+        else if (x[i] + r > cw) { x[i] = cw - r; vx[i] *= -1; }
 
-function updateBallsRadius() {
-    // 與滑鼠的互動
-    let isHovering = false;
-    if (mouseX !== null && mouseY !== null) {
-        const dx = x[i] - mouseX;
-        const dy = y[i] - mouseY;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist <= radius[i] && radius[i] < maxBallRadius) {
-            // 滑鼠懸停時增加球體尺寸
-            // increase ball size on mouse hover
+        if (y[i] - r < 0) { y[i] = r; vy[i] *= -1; }
+        else if (y[i] + r > ch) { y[i] = ch - r; vy[i] *= -1; }
+        // 滑鼠互動 (半徑)
+        let isHovering = false;
+        const dx = x[i] - mx;
+        const dy = y[i] - my;
+        const distSq = dx * dx + dy * dy;
+
+        if (distSq < r * r) {
             isHovering = true;
-            radius[i] += 0.5;
+            if (r < ballparms.maxBallRadius) radiusAdd[i] += 0.5;
+        }
+
+        if (!isHovering && r > radius[i]) {
+            radiusAdd[i] -= 0.5;
         }
     }
-    if (!isHovering && radius[i] > ballRadius) {
-        radius[i] -= 0.5;
+
+    // 進入等待發送階段
+    checkAndPost();
+}
+
+function checkAndPost() {
+    if (canPost || !doWorkerSync) {
+        canPost = false; // 重設開關
+        UpdateCount++;
+        const currentTime = performance.now();
+        if (currentTime - lastUpsUpdate > 500) { // 每 500ms 更新一次文字
+            ups = Math.round((UpdateCount * 1000) / (currentTime - lastUpsUpdate));
+            lastUpsUpdate = currentTime;
+            UpdateCount = 0;
+        }
+        postMessage({
+            type: 'updateComplete',
+            buffer: buffer,
+            currentBallCount: ballparms.currentBallCount,
+            ups: ups
+        });
+        // 排程下次更新，並釋放執行緒以利通訊處理
+        // Schedule next update and yield thread for message handling
+        setTimeout(updateBall, 0);
+    } else {
+        // 延遲 10 毫秒後輪詢發送狀態，維持物理數據同步
+        // Poll post status after 10ms to maintain physics data synchronization
+        setTimeout(checkAndPost, 0);
     }
 }
 
-self.addEventListener('message', (e) => {
+function updateCanvasSizeAndBallParms(data = {}) {
+    if (!data.width || !data.height) return;
+    canvasWidth = data.width;
+    canvasHeight = data.height;
+    ballparms.maxBaseBallRadius = Math.min(canvasWidth, canvasHeight) * 0.1 / 2;
+    ballparms.maxBallRadius = Math.min(canvasWidth, canvasHeight) / 2;
+}
+
+// 訊息監聽
+// Message Listener 
+self.onmessage = (e) => {
     const data = e.data;
     switch (data.type) {
         case 'init':
-            canvasWidth = data.width;
-            canvasHeight = data.height;
-            maxBallRadius = Math.min(canvasWidth, canvasHeight) / 2;
+            updateCanvasSizeAndBallParms(data);
             init();
             break;
-        case 'canUpdate':
-            canUpdate = true; // 收到主執行緒訊號：我可以接收新 Buffer 了
+        case 'canPost':
+            // 接收主執行緒準備就緒訊號，更新傳輸狀態位元
+            // Update transmission status on main thread ready signal
+            canPost = true;
             break;
         case 'resize':
-            canvasWidth = data.width;
-            canvasHeight = data.height;
-            maxBallRadius = Math.min(canvasWidth, canvasHeight) / 2;
+            updateCanvasSizeAndBallParms(data);
             break;
         case 'mouseMove':
             mouseX = data.x;
             mouseY = data.y;
-            break;  
+            break;
         case 'mouseLeave':
-            mouseX = -999;
-            mouseY = -999;
-            break;  
+            mouseX = null;
+            mouseY = null;
+            break;
         case 'mouseClick':
-            if (activeCount < MAX_BALLS) createBalls(activeCount);
+            const clickX = data.x;
+            const clickY = data.y;
+            if (ballparms.currentBallCount < ballparms.MAX_BALLS) createBalls(ballparms.currentBallCount, clickX, clickY);
             break;
     }
-});
+};
+
+postMessage({ type: 'workerReady', ballparms: ballparms });
